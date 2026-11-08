@@ -6,6 +6,13 @@ import pandas as pd
 from filing_parser import find_filing_sections
 from financial_metrics import extract_financial_metrics
 
+from source_utils import (
+    get_page_text,
+    find_source_context,
+    build_cited_document,
+    validate_document
+)
+
 
 # ---------------------------------------------------
 # PAGE CONFIGURATION
@@ -20,9 +27,9 @@ st.set_page_config(
 st.title("📊 Financial Statement AI Analyzer")
 
 st.write(
-    "Upload a company's 10-K or 10-Q to explore "
-    "its financial performance, financial "
-    "statements, business operations, and risks."
+    "Upload a company's 10-K or 10-Q to "
+    "explore financial data, business risks, "
+    "and source-backed financial information."
 )
 
 
@@ -39,14 +46,15 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
 
     # -----------------------------------------------
-    # EXTRACT PDF TEXT
+    # PDF EXTRACTION
     # -----------------------------------------------
 
     try:
+
         pdf_bytes = uploaded_file.getvalue()
 
         if not pdf_bytes:
-            st.error("The uploaded PDF is empty.")
+            st.error("The PDF is empty.")
             st.stop()
 
         with fitz.open(
@@ -54,19 +62,21 @@ if uploaded_file is not None:
             filetype="pdf"
         ) as doc:
 
-            page_count = len(doc)
-
             pages = [
                 page.get_text("text")
                 for page in doc
             ]
 
+        page_count = len(pages)
+
         full_text = "\n".join(pages)
 
     except Exception as error:
+
         st.error(
-            f"Could not read the PDF: {error}"
+            f"PDF extraction failed: {error}"
         )
+
         st.stop()
 
     st.success("PDF uploaded successfully!")
@@ -91,54 +101,38 @@ if uploaded_file is not None:
             f"{len(full_text):,}"
         )
 
-    # -----------------------------------------------
-    # EXTRACTED TEXT PREVIEW
-    # -----------------------------------------------
+    with st.expander("View Extracted Text"):
 
-    with st.expander("View Extracted Text Preview"):
-
-        if full_text.strip():
-            st.text_area(
-                "Report content",
-                value=full_text[:5000],
-                height=300,
-                key="full_text_preview"
-            )
-
-        else:
-            st.warning(
-                "No selectable text was found. "
-                "The PDF may contain scanned pages."
-            )
+        st.text_area(
+            "PDF Text Preview",
+            value=full_text[:5000],
+            height=300
+        )
 
     # -----------------------------------------------
-    # FILING SECTION NAVIGATOR
+    # FILING NAVIGATOR
     # -----------------------------------------------
 
     st.divider()
 
     st.header("📂 Filing Section Navigator")
 
-    st.write(
-        "Explore important sections of the "
-        "company's financial filing."
-    )
-
     try:
         sections = find_filing_sections(pages)
 
     except Exception as error:
+
         st.error(
-            f"Could not identify sections: {error}"
+            f"Section detection failed: {error}"
         )
+
         sections = {}
 
     if sections:
 
         selected_section = st.selectbox(
-            "Select a section to explore",
-            list(sections.keys()),
-            key="filing_section"
+            "Choose a filing section",
+            list(sections.keys())
         )
 
         section_data = sections[selected_section]
@@ -152,39 +146,27 @@ if uploaded_file is not None:
 
         with col1:
             st.metric(
-                "PDF Page Range",
-                f"{start_page}–{end_page}"
+                "Starting PDF Page",
+                start_page
             )
 
         with col2:
             st.metric(
-                "Section Characters",
-                f"{len(section_text):,}"
+                "Ending PDF Page",
+                end_page
             )
-
-        st.subheader(selected_section)
 
         st.text_area(
             "Section Content",
             value=section_text,
-            height=400,
-            key="section_content"
+            height=400
         )
-
-        # -------------------------------------------
-        # PARSER VERIFICATION
-        # -------------------------------------------
 
         with st.expander(
             "🔍 Verify Extracted Section"
         ):
 
             st.write(
-                "Check that the extracted text "
-                "belongs to the selected section."
-            )
-
-            st.markdown(
                 "**Beginning of section:**"
             )
 
@@ -193,7 +175,7 @@ if uploaded_file is not None:
                 language=None
             )
 
-            st.markdown(
+            st.write(
                 "**End of section:**"
             )
 
@@ -202,62 +184,41 @@ if uploaded_file is not None:
                 language=None
             )
 
-            st.write(
-                f"**Starting PDF page:** {start_page}"
-            )
-
-            st.write(
-                f"**Ending PDF page:** {end_page}"
-            )
-
-            st.info(
-                "Verify that the section starts "
-                "with the correct heading and ends "
-                "before the next filing section."
-            )
-
     else:
+
         st.warning(
             "No filing sections were detected."
         )
 
     # -----------------------------------------------
-    # FINANCIAL METRICS EXTRACTION
-    # DAY 3 FEATURE
+    # FINANCIAL METRICS
     # -----------------------------------------------
 
     st.divider()
 
     st.header("💰 Financial Metrics Extraction")
 
-    st.write(
-        "Automatically search the uploaded report "
-        "for important financial metrics."
-    )
-
     st.info(
-        "These are candidate values, not verified "
-        "financial results. Check the source PDF "
-        "before using them in calculations."
+        "Extracted values are candidates. "
+        "Verify their reporting year, units, "
+        "and source before using them."
     )
 
     try:
+
         metrics_df = extract_financial_metrics(
             pages
         )
 
     except Exception as error:
+
         st.error(
-            f"Could not extract financial metrics: "
-            f"{error}"
+            f"Metric extraction failed: {error}"
         )
+
         metrics_df = pd.DataFrame()
 
     if not metrics_df.empty:
-
-        # -------------------------------------------
-        # METRICS SUMMARY
-        # -------------------------------------------
 
         col1, col2 = st.columns(2)
 
@@ -273,10 +234,6 @@ if uploaded_file is not None:
                 metrics_df["Metric"].nunique()
             )
 
-        # -------------------------------------------
-        # METRIC FILTER
-        # -------------------------------------------
-
         metric_options = [
             "All Metrics"
         ] + sorted(
@@ -284,24 +241,20 @@ if uploaded_file is not None:
         )
 
         selected_metric = st.selectbox(
-            "Filter by financial metric",
-            metric_options,
-            key="metric_filter"
+            "Filter financial metrics",
+            metric_options
         )
 
         if selected_metric == "All Metrics":
+
             filtered_df = metrics_df.copy()
 
         else:
+
             filtered_df = metrics_df[
-                metrics_df["Metric"] == selected_metric
+                metrics_df["Metric"]
+                == selected_metric
             ].copy()
-
-        # -------------------------------------------
-        # FINANCIAL METRICS TABLE
-        # -------------------------------------------
-
-        st.subheader("Extracted Financial Data")
 
         st.dataframe(
             filtered_df,
@@ -313,20 +266,25 @@ if uploaded_file is not None:
         # SOURCE VERIFICATION
         # -------------------------------------------
 
-        st.subheader("Verify a Financial Metric")
+        st.subheader("Verify Financial Data")
 
-        selected_row = st.selectbox(
-            "Select a candidate to inspect",
+        candidate_index = st.selectbox(
+            "Choose a metric candidate",
             range(len(filtered_df)),
             format_func=lambda i: (
                 f"{filtered_df.iloc[i]['Metric']} "
-                f"— PDF Page "
+                f"— Page "
                 f"{filtered_df.iloc[i]['PDF Page']}"
-            ),
-            key="verify_metric"
+            )
         )
 
-        candidate = filtered_df.iloc[selected_row]
+        candidate = filtered_df.iloc[
+            candidate_index
+        ]
+
+        source_page = int(
+            candidate["PDF Page"]
+        )
 
         st.write(
             f"**Metric:** {candidate['Metric']}"
@@ -338,46 +296,177 @@ if uploaded_file is not None:
         )
 
         st.write(
-            f"**PDF Page:** "
-            f"{candidate['PDF Page']}"
+            f"**Source:** PDF Page {source_page}"
         )
 
-        st.write("**Original Extracted Line:**")
+        st.write("**Original Source Line:**")
 
         st.code(
-            candidate["Source Text"],
+            str(candidate["Source Text"]),
             language=None
         )
 
-        st.warning(
-            "Check the reporting year, units, "
-            "and column alignment in the PDF. "
-            "A number appearing beside a label "
-            "is not automatically the correct "
-            "current-year value."
-        )
+        # -------------------------------------------
+        # NEW: SOURCE CONTEXT
+        # -------------------------------------------
 
-        # -------------------------------------------
-        # DOWNLOAD EXTRACTED DATA
-        # -------------------------------------------
+        with st.expander(
+            "📄 View Source Context"
+        ):
+
+            context = find_source_context(
+                pages,
+                source_page,
+                candidate["Source Text"]
+            )
+
+            st.code(
+                context,
+                language=None
+            )
+
+            st.caption(
+                "This context comes from the "
+                "PDF's extracted text. Verify "
+                "table alignment in the PDF."
+            )
 
         csv_data = metrics_df.to_csv(
             index=False
         )
 
         st.download_button(
-            label="Download Financial Metrics CSV",
+            "Download Financial Metrics CSV",
             data=csv_data,
             file_name="financial_metrics.csv",
             mime="text/csv"
         )
 
     else:
+
         st.warning(
-            "No financial metric candidates "
-            "were found. The report may use "
-            "a different table format."
+            "No financial metrics were detected."
         )
+
+    # -----------------------------------------------
+    # NEW: PDF SOURCE VIEWER
+    # -----------------------------------------------
+
+    st.divider()
+
+    st.header("📖 PDF Source Viewer")
+
+    st.write(
+        "Inspect the original extracted text "
+        "from any PDF page."
+    )
+
+    selected_page = st.number_input(
+        "Select PDF page",
+        min_value=1,
+        max_value=max(1, page_count),
+        value=1,
+        step=1
+    )
+
+    page_text = get_page_text(
+        pages,
+        selected_page
+    )
+
+    st.text_area(
+        f"PDF Page {selected_page}",
+        value=page_text,
+        height=400
+    )
+
+    # -----------------------------------------------
+    # NEW: DOCUMENT VALIDATION
+    # -----------------------------------------------
+
+    st.divider()
+
+    st.header("🧪 Document Validation")
+
+    st.write(
+        "Run automatic checks to identify "
+        "potential extraction problems."
+    )
+
+    validation_results = validate_document(
+        pages,
+        sections,
+        metrics_df
+    )
+
+    validation_df = pd.DataFrame(
+        validation_results
+    )
+
+    st.dataframe(
+        validation_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    passed = sum(
+        result["Status"] == "PASS"
+        for result in validation_results
+    )
+
+    total = len(validation_results)
+
+    st.metric(
+        "Validation Checks Passed",
+        f"{passed}/{total}"
+    )
+
+    st.caption(
+        "Passing these checks does not "
+        "guarantee financial accuracy. "
+        "They test basic extraction quality."
+    )
+
+    # -----------------------------------------------
+    # NEW: AI-READY DOCUMENT
+    # -----------------------------------------------
+
+    st.divider()
+
+    st.header("🤖 AI-Ready Document")
+
+    st.write(
+        "Prepare extracted text with page "
+        "references for future AI analysis."
+    )
+
+    cited_document = build_cited_document(
+        pages
+    )
+
+    with st.expander(
+        "Preview Page-Referenced Text"
+    ):
+
+        st.code(
+            cited_document[:4000],
+            language=None
+        )
+
+    st.download_button(
+        "Download AI-Ready Text",
+        data=cited_document,
+        file_name="page_referenced_filing.txt",
+        mime="text/plain"
+    )
+
+    st.info(
+        "The text includes PDF page markers. "
+        "A future AI model can use these "
+        "markers to generate source references, "
+        "but citations will still need "
+        "verification."
+    )
 
 
 # ---------------------------------------------------
@@ -388,39 +477,29 @@ st.divider()
 
 st.header("📚 Understanding Financial Statements")
 
-st.write(
-    "Learn about the three main financial "
-    "statements found in company filings."
-)
-
 statement = st.selectbox(
     "Choose a financial statement",
     [
         "Income Statement",
         "Balance Sheet",
         "Cash Flow Statement"
-    ],
-    key="learning_guide"
+    ]
 )
 
-
-# ---------------------------------------------------
-# INCOME STATEMENT
-# ---------------------------------------------------
 
 if statement == "Income Statement":
 
     st.subheader("Income Statement")
 
     st.write(
-        "The income statement shows revenue, "
-        "expenses, and profit over a reporting "
-        "period."
+        "Shows a company's revenue, "
+        "expenses, and profitability "
+        "over a reporting period."
     )
 
     st.info(
-        "Key metrics: Revenue, Operating Income, "
-        "Net Income, Earnings Per Share"
+        "Key metrics: Revenue, Operating "
+        "Income, Net Income, EPS"
     )
 
     st.latex(
@@ -429,23 +508,19 @@ if statement == "Income Statement":
     )
 
 
-# ---------------------------------------------------
-# BALANCE SHEET
-# ---------------------------------------------------
-
 elif statement == "Balance Sheet":
 
     st.subheader("Balance Sheet")
 
     st.write(
-        "The balance sheet shows what a company "
-        "owns, what it owes, and shareholders' "
-        "equity at a specific point in time."
+        "Shows a company's assets, "
+        "liabilities, and shareholders' "
+        "equity at a specific date."
     )
 
     st.info(
-        "Key metrics: Assets, Liabilities, "
-        "Shareholders' Equity"
+        "Key metrics: Total Assets, "
+        "Total Liabilities, Equity"
     )
 
     st.latex(
@@ -455,35 +530,29 @@ elif statement == "Balance Sheet":
     )
 
 
-# ---------------------------------------------------
-# CASH FLOW STATEMENT
-# ---------------------------------------------------
-
 elif statement == "Cash Flow Statement":
 
     st.subheader("Cash Flow Statement")
 
     st.write(
-        "The cash flow statement shows how "
-        "cash enters and leaves a company "
+        "Shows cash generated and spent "
         "through operating, investing, "
         "and financing activities."
     )
 
     st.info(
-        "Key categories: Operating Activities, "
-        "Investing Activities, "
-        "Financing Activities"
+        "Key categories: Operating, "
+        "Investing, Financing"
     )
 
     st.latex(
         r"\text{Net Change in Cash} = "
-        r"\text{Operating Cash Flow} + "
-        r"\text{Investing Cash Flow} + "
-        r"\text{Financing Cash Flow}"
+        r"\text{Operating} + "
+        r"\text{Investing} + "
+        r"\text{Financing}"
     )
 
     st.caption(
-        "Simplified formula; reported changes "
-        "may also include exchange-rate effects."
+        "Simplified formula. Exchange-rate "
+        "effects may also affect cash changes."
     )
